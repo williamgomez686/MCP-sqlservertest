@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP-SQL - Asistente IA</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Asistente de Consultas SQL con IA</h1>
+            <p>Escribe una pregunta en lenguaje natural y la IA generará y ejecutará la consulta SQL correspondiente.</p>
+        </header>
+
+        <main>
+            <div class="form-container">
+                <textarea id="prompt-input" placeholder="Ej: Muestra los 5 pacientes más recientes con sus citas programadas para la próxima semana."></textarea>
+                <button id="submit-button">Generar y Ejecutar</button>
+            </div>
+
+            <div id="loading-indicator" class="hidden">
+                <div class="spinner"></div>
+                <p>Procesando, por favor espera...</p>
+            </div>
+
+            <div id="results-container" class="hidden">
+                <h2>Consulta SQL Generada</h2>
+                <pre><code id="sql-query-display"></code></pre>
+                
+                <h2>Resultados</h2>
+                <div id="results-table-container"></div>
+                <p id="error-message" class="error-text"></p>
+            </div>
+        </main>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+</html>

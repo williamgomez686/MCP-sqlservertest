@@ -1,17 +1,17 @@
 // server.js
-const express     = require('express');
-const bodyParser  = require('body-parser');
-const fs          = require('fs').promises;
-const path        = require('path');
-const sql         = require('mssql');
-const { execSync }= require('child_process');
+const express      = require('express');
+const bodyParser   = require('body-parser');
+const fs           = require('fs').promises;
+const path         = require('path');
+const sql          = require('mssql');
+const { execSync } = require('child_process');
 const { db, apiToken } = require('./config');
 
 const app = express();
 app.use(bodyParser.json());
-app.use(express.static('public'));  // Sirve UI web desde public/
+app.use(express.static('public'));    // Sirve UI desde public/
 
-// --- Middleware de autenticación por token ---
+/** Middleware de autenticación */
 app.use((req, res, next) => {
   if (req.headers['x-api-token'] !== apiToken) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -19,124 +19,89 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Helper: conexión a SQL Server con pool global ---
+/** Helper: conecta a SQL Server con pool global */
 let pool;
 async function getPool() {
   if (!pool) pool = await sql.connect(db);
   return pool;
 }
 
-/** 1. Navegar carpetas (para UI) */
+/** Endpoints de archivos (list, read, move, copy, delete, stat, grep, write) */
 app.post('/browse', async (req, res) => {
   try {
-    const folder = req.body.folder;
-    const items  = await fs.readdir(folder, { withFileTypes: true });
-    const files  = items.filter(i => i.isFile()).map(i => i.name);
-    const dirs   = items.filter(i => i.isDirectory()).map(i => i.name);
-    res.json({ folders: dirs, files });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** 2. Listar archivos de una carpeta */
-app.post('/list', async (req, res) => {
-  try {
-    const items = await fs.readdir(req.body.folder);
-    res.json({ items });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** 3. Leer archivo de texto */
-app.post('/read', async (req, res) => {
-  try {
-    const content = await fs.readFile(req.body.path, 'utf8');
-    res.json({ content });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** 4. Mover/renombrar un archivo */
-app.post('/move', async (req, res) => {
-  try {
-    await fs.rename(req.body.src, req.body.dest);
-    res.json({ moved: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** 5. Copiar un archivo */
-app.post('/copy', async (req, res) => {
-  try {
-    await fs.copyFile(req.body.src, req.body.dest);
-    res.json({ copied: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** 6. Eliminar un archivo */
-app.post('/delete', async (req, res) => {
-  try {
-    await fs.unlink(req.body.path);
-    res.json({ deleted: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** 7. Obtener metadatos de un archivo/carpeta */
-app.post('/stat', async (req, res) => {
-  try {
-    const info = await fs.stat(req.body.path);
+    const items = await fs.readdir(req.body.folder, { withFileTypes: true });
     res.json({
-      size:      info.size,
-      created:   info.birthtime,
-      modified:  info.mtime,
-      isFile:    info.isFile(),
-      isDir:     info.isDirectory()
+      folders: items.filter(i => i.isDirectory()).map(i => i.name),
+      files:   items.filter(i => i.isFile()).map(i => i.name)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/** 8. Buscar texto (“grep”) en archivos .txt */
-app.post('/grep', async (req, res) => {
-  try {
+app.post('/list',  async (req, res) => { try { res.json({ items: await fs.readdir(req.body.folder) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/read',  async (req, res) => { try {
+    res.json({ content: await fs.readFile(req.body.path, 'utf8') });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/move',  async (req, res) => { try {
+    await fs.rename(req.body.src, req.body.dest);
+    res.json({ moved: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/copy',  async (req, res) => { try {
+    await fs.copyFile(req.body.src, req.body.dest);
+    res.json({ copied: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/delete',async (req, res) => { try {
+    await fs.unlink(req.body.path);
+    res.json({ deleted: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/stat',  async (req, res) => { try {
+    const info = await fs.stat(req.body.path);
+    res.json({
+      size: info.size,
+      created: info.birthtime,
+      modified: info.mtime,
+      isFile: info.isFile(),
+      isDirectory: info.isDirectory()
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/grep',  async (req, res) => { try {
     const { folder, pattern } = req.body;
     const regex = new RegExp(pattern, 'i');
     const files = await fs.readdir(folder);
     const matches = [];
     for (const f of files) {
-      if (f.match(/\.txt$/i)) {
+      if (/\.txt$/i.test(f)) {
         const txt = await fs.readFile(path.join(folder, f), 'utf8');
         if (regex.test(txt)) matches.push(f);
       }
     }
     res.json({ matches });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/** 9. Crear o sobrescribir un archivo */
-app.post('/write', async (req, res) => {
-  try {
+app.post('/write', async (req, res) => { try {
     await fs.writeFile(req.body.path, req.body.content || '');
     res.json({ written: true, path: req.body.path });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/** --- ENDPOINTS PARA SQL SERVER --- **/
+/** Endpoints SQL Server **/
 
-/** 10. Listar tablas de la BD */
+// 1) Listar tablas
 app.post('/sql/tables', async (req, res) => {
   try {
     const p = await getPool();
@@ -150,33 +115,32 @@ app.post('/sql/tables', async (req, res) => {
   }
 });
 
-/** 11. Describir columnas de una tabla */
+// 2) Describir columnas
 app.post('/sql/describe', async (req, res) => {
-  const { schema, table } = req.body;
   try {
+    const { schema, table } = req.body;
     const p = await getPool();
-    const q = `
-      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA=@schema AND TABLE_NAME=@table
-    `;
     const result = await p.request()
       .input('schema', sql.NVarChar, schema)
       .input('table',  sql.NVarChar, table)
-      .query(q);
+      .query(`
+        SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA=@schema AND TABLE_NAME=@table
+      `);
     res.json({ columns: result.recordset });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/** 12. Ejecutar consulta SELECT arbitraria */
+// 3) Ejecutar SELECT arbitrario
 app.post('/sql/query', async (req, res) => {
-  const { sqlText } = req.body;
-  if (!/^select/i.test(sqlText)) {
-    return res.status(400).json({ error: 'Solo se permiten SELECT.' });
-  }
   try {
+    const { sqlText } = req.body;
+    if (!/^select/i.test(sqlText)) {
+      return res.status(400).json({ error: 'Solo se permiten SELECT.' });
+    }
     const p = await getPool();
     const result = await p.request().query(sqlText);
     res.json({ rows: result.recordset });
@@ -185,13 +149,13 @@ app.post('/sql/query', async (req, res) => {
   }
 });
 
-/** 13. Preguntar a Ollama por una consulta SQL (con debug) */
+// 4) Preguntar a Ollama usando su API REST
 app.post('/sql/ask-ollama', async (req, res) => {
-    const { question, tables = ['Pacientes','Citas'] } = req.body;
+    const { question, tables = ['Pacientes', 'Citas'] } = req.body;
   
     try {
-      // 1) Leer esquemas igual que antes…
-      const p    = await getPool();
+      // Paso 1: Obtener los esquemas de las tablas (sin cambios)
+      const p = await getPool();
       const info = {};
       for (const t of tables) {
         const r = await p.request()
@@ -207,63 +171,79 @@ app.post('/sql/ask-ollama', async (req, res) => {
           .join(', ');
       }
   
-      // 2) Generar prompt
+      // --- INICIO DE LA SECCIÓN MODIFICADA: USO DE LA API REST ---
+  
+      // Paso 2: Construir el prompt, siendo muy claro sobre el formato JSON
       const ctx = tables.map(t => `Tabla ${t}: ${info[t]}`).join('\n');
       const prompt = `
-  Eres un asistente SQL.
-  Estos son los esquemas de las tablas disponibles:
+  Eres un asistente experto en T-SQL. Basado en los siguientes esquemas de tablas, genera una consulta para responder a la pregunta del usuario.
+  Tu respuesta DEBE ser únicamente un objeto JSON con una sola clave "query".
+  
+  Esquemas:
   ${ctx}
   
-  Pregunta: ${question}
+  Pregunta: "${question}"
   
-  Devuelve solo la consulta SELECT válida, sin explicación.
-      `.trim();
+  JSON de respuesta:
+  `.trim();
   
-      // 3) Ejecutar Ollama y capturar rawOutput
-      const rawBuffer = execSync(
-        `ollama run llama2 --json --prompt "${prompt.replace(/"/g,'\\"')}"`
-      );
-      const rawOutput = rawBuffer.toString();
+      // Paso 3: Preparar el payload para la API de Ollama
+      const payload = {
+        model: "qwen2.5vl:3b", // El modelo que estás usando
+        prompt: prompt,
+        format: "json",        // ¡Crucial! Le pide a Ollama que la salida sea un JSON válido.
+        stream: false          // Queremos la respuesta completa, no un stream.
+      };
   
-      // 4) Intentar parsear JSON
-      let modelJson;
-      try {
-        modelJson = JSON.parse(rawOutput);
-      } catch (parseErr) {
-        // Si no es JSON, devolvemos rawOutput para debug
-        return res.status(500).json({
-          error: 'Respuesta de Ollama no es JSON',
-          debug: { rawOutput }
-        });
-      }
-  
-      // 5) Extraer el texto generado
-      let text = modelJson.text
-              ?? modelJson.choices?.[0]?.message?.content
-              ?? modelJson.choices?.[0]?.text
-              ?? '';
-      text = text.trim();
-  
-      // 6) Validar SELECT
-      if (!/^select/i.test(text)) {
-        return res.status(400).json({
-          error: 'Ollama no generó una consulta SELECT válida.',
-          debug: { rawOutput, modelJson, generated: text }
-        });
-      }
-  
-      // 7) Responder con la consulta y el debug opcional
-      return res.json({
-        query: text,
-        debug: { rawOutput, modelJson }
+      // Paso 4: Llamar a la API de Ollama con fetch
+      const ollamaEndpoint = 'http://localhost:11434/api/generate';
+      const response = await fetch(ollamaEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
   
+      if (!response.ok) {
+        // Si la API de Ollama devuelve un error (ej: 404, 500)
+        const errorText = await response.text();
+        throw new Error(`La API de Ollama respondió con el estado ${response.status}: ${errorText}`);
+      }
+  
+      const ollamaData = await response.json();
+      
+      // La respuesta de la API contiene el JSON en la clave "response", pero como un string.
+      // Necesitamos parsear ese string para obtener el objeto final.
+      let finalJson;
+      try {
+        finalJson = JSON.parse(ollamaData.response);
+      } catch (e) {
+        return res.status(500).json({
+          error: 'Ollama no devolvió un string con formato JSON válido en su respuesta.',
+          rawOutputFromOllama: ollamaData.response
+        });
+      }
+  
+      // Paso 5: Validar y devolver la consulta
+      const query = (finalJson.query || '').trim();
+      if (!/^select/i.test(query)) {
+        return res.status(400).json({
+          error: 'El JSON generado no contiene una consulta SELECT válida.',
+          responseObject: finalJson
+        });
+      }
+  
+      res.json({ query }); // Enviamos solo la consulta al cliente
+  
+      // --- FIN DE LA SECCIÓN MODIFICADA ---
+  
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      // Este catch ahora atrapará errores de SQL, de la red (fetch), o de la API
+      console.error(err); // Es bueno registrar el error completo en el servidor
+      res.status(500).json({ error: err.message });
     }
   });
 
-// Inicia el servidor HTTP
+// Iniciar servidor
 const PORT = 3001;
 app.listen(PORT, () => {
   console.log(`MCP-SQL escuchando en http://localhost:${PORT}`);

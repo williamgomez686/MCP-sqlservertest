@@ -189,7 +189,7 @@ app.post('/sql/ask-ollama', async (req, res) => {
   
       // Paso 3: Preparar el payload para la API de Ollama
       const payload = {
-        model: "qwen2.5vl:3b", // El modelo que estás usando
+        model: "phi3:3.8b", // El modelo que estás usando starcoder2:3b, qwen2.5vl:3b, phi3:3.8b  
         prompt: prompt,
         format: "json",        // ¡Crucial! Le pide a Ollama que la salida sea un JSON válido.
         stream: false          // Queremos la respuesta completa, no un stream.

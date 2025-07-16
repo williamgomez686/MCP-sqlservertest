@@ -251,6 +251,6 @@ app.post('/sql/ask-ollama', async (req, res) => {
 
 // Iniciar servidor
 const port = process.env.PORT || 3001;
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, () => {
   console.log(`MCP-SQL escuchando en http://localhost:${port}`);
 });

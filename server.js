@@ -5,7 +5,7 @@ const fs           = require('fs').promises;
 const path         = require('path');
 const sql          = require('mssql');
 const { execSync } = require('child_process');
-const { db, apiToken } = require('./config');
+const { db, apiToken, openRouterApiKey } = require('./config');
 
 const app = express();
 app.use(bodyParser.json());
@@ -149,9 +149,9 @@ app.post('/sql/query', async (req, res) => {
   }
 });
 
-// 4) Preguntar a Ollama usando su API REST
+// 4) Preguntar a un modelo de IA (OpenRouter) para generar SQL
 app.post('/sql/ask-ollama', async (req, res) => {
-    const { question, tables = ['Pacientes', 'Citas'] } = req.body;
+    const { question, tables = ['Pacientes', 'Citas', 'EstadosCita', 'Consultas', 'Profesionales', 'Empleados'] } = req.body;
   
     try {
       // Paso 1: Obtener los esquemas de las tablas (sin cambios)
@@ -171,60 +171,66 @@ app.post('/sql/ask-ollama', async (req, res) => {
           .join(', ');
       }
   
-      // --- INICIO DE LA SECCIÓN MODIFICADA: USO DE LA API REST ---
+      // --- INICIO DE LA SECCIÓN MODIFICADA: USO DE OPENROUTER ---
   
-      // Paso 2: Construir el prompt, siendo muy claro sobre el formato JSON
-      const ctx = tables.map(t => `Tabla ${t}: ${info[t]}`).join('\n');
-      const prompt = `
-  Eres un asistente experto en T-SQL. Basado en los siguientes esquemas de tablas, genera una consulta para responder a la pregunta del usuario.
-  Tu respuesta DEBE ser únicamente un objeto JSON con una sola clave "query".
-  
-  Esquemas:
-  ${ctx}
-  
-  Pregunta: "${question}"
-  
-  JSON de respuesta:
-  `.trim();
-  
-      // Paso 3: Preparar el payload para la API de Ollama
+      // Paso 2: Construir el prompt en formato de mensajes (estilo OpenAI)
+      const tableSchemas = tables.map(t => `Tabla ${t}: ${info[t]}`).join('\n');
+      const systemPrompt = `Eres un asistente experto en T-SQL. Basado en los esquemas de tablas proporcionados, genera una consulta para responder a la pregunta del usuario. Tu respuesta DEBE ser únicamente un objeto JSON con una sola clave "query".`;
+      const userPrompt = `Esquemas:\n${tableSchemas}\n\nPregunta: "${question}"\n\nJSON de respuesta:`;
+
+      // Paso 3: Preparar el payload para la API de OpenRouter
       const payload = {
-        model: "phi3:3.8b", // El modelo que estás usando starcoder2:3b, qwen2.5vl:3b, phi3:3.8b  
-        prompt: prompt,
-        format: "json",        // ¡Crucial! Le pide a Ollama que la salida sea un JSON válido.
-        stream: false          // Queremos la respuesta completa, no un stream.
+        model: "deepseek/deepseek-chat-v3-0324:free", // Un modelo potente y gratuito de OpenRouter
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        response_format: { "type": "json_object" } // Pedimos explícitamente un JSON
       };
-  
-      // Paso 4: Llamar a la API de Ollama con fetch
-      const ollamaEndpoint = 'http://localhost:11434/api/generate';
-      const response = await fetch(ollamaEndpoint, {
+
+      // Paso 4: Llamar a la API de OpenRouter
+      const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
+      const response = await fetch(openRouterEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: {
+          'Authorization': `Bearer ${openRouterApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(300000) // Mantenemos el timeout largo
       });
-  
+
       if (!response.ok) {
-        // Si la API de Ollama devuelve un error (ej: 404, 500)
         const errorText = await response.text();
-        throw new Error(`La API de Ollama respondió con el estado ${response.status}: ${errorText}`);
+        throw new Error(`La API de OpenRouter respondió con el estado ${response.status}: ${errorText}`);
       }
-  
-      const ollamaData = await response.json();
+
+      const openRouterData = await response.json();
       
-      // La respuesta de la API contiene el JSON en la clave "response", pero como un string.
-      // Necesitamos parsear ese string para obtener el objeto final.
+      // La respuesta de OpenRouter ya contiene el JSON parseado en la ruta correcta
       let finalJson;
       try {
-        finalJson = JSON.parse(ollamaData.response);
+        finalJson = JSON.parse(openRouterData.choices[0].message.content);
       } catch (e) {
         return res.status(500).json({
-          error: 'Ollama no devolvió un string con formato JSON válido en su respuesta.',
-          rawOutputFromOllama: ollamaData.response
+          error: 'OpenRouter no devolvió un string con formato JSON válido en su respuesta.',
+          rawOutputFromOpenRouter: openRouterData.choices[0].message.content
         });
       }
   
       // Paso 5: Validar y devolver la consulta
-      const query = (finalJson.query || '').trim();
+      console.log('Respuesta JSON de Ollama:', JSON.stringify(finalJson, null, 2)); // Log para depuración
+
+      const queryValue = finalJson.query;
+      if (typeof queryValue !== 'string') {
+        return res.status(500).json({
+          error: 'La respuesta de Ollama no contenía una propiedad "query" de tipo string. Revisa la consola del servidor para ver la respuesta completa.',
+          responseObject: finalJson
+        });
+      }
+
+      // Limpiar la consulta: algunos modelos envuelven el SQL en llaves.
+      const query = queryValue.replace(/^{|}$/g, '').trim();
       if (!/^select/i.test(query)) {
         return res.status(400).json({
           error: 'El JSON generado no contiene una consulta SELECT válida.',
@@ -244,7 +250,7 @@ app.post('/sql/ask-ollama', async (req, res) => {
   });
 
 // Iniciar servidor
-const PORT = 3001;
-app.listen(PORT, () => {
-  console.log(`MCP-SQL escuchando en http://localhost:${PORT}`);
+const port = process.env.PORT || 3001;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`MCP-SQL escuchando en http://localhost:${port}`);
 });

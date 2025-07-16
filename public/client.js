@@ -34,8 +34,14 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!askResponse.ok) {
-                const errData = await askResponse.json();
-                throw new Error(errData.error || 'Error al generar la consulta SQL.');
+                let errorMsg = 'Error al generar la consulta SQL.';
+                try {
+                    const errData = await askResponse.json();
+                    errorMsg = errData.error || JSON.stringify(errData);
+                } catch (e) {
+                    errorMsg = await askResponse.text();
+                }
+                throw new Error(errorMsg);
             }
 
             const { query: sqlQuery } = await askResponse.json();
@@ -53,8 +59,14 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!queryResponse.ok) {
-                const errData = await queryResponse.json();
-                throw new Error(errData.error || 'Error al ejecutar la consulta SQL.');
+                let errorMsg = 'Error al ejecutar la consulta SQL.';
+                try {
+                    const errData = await queryResponse.json();
+                    errorMsg = errData.error || JSON.stringify(errData);
+                } catch (e) {
+                    errorMsg = await queryResponse.text();
+                }
+                throw new Error(errorMsg);
             }
 
             const { rows } = await queryResponse.json();

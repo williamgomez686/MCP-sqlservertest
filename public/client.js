@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Mapeo de elementos del DOM
     const promptInput = document.getElementById('prompt-input');
     const submitButton = document.getElementById('submit-button');
     const loadingIndicator = document.getElementById('loading-indicator');
@@ -9,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const apiToken = 'mcp123'; // El mismo token que en tu config.js
 
+    // Evento principal al hacer clic en el botón
     submitButton.addEventListener('click', async () => {
         const question = promptInput.value.trim();
         if (!question) {
@@ -16,39 +18,29 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Resetear y mostrar el loader
-        resultsContainer.classList.add('hidden');
-        errorMessage.classList.add('hidden');
-        loadingIndicator.classList.remove('hidden');
-        submitButton.disabled = true;
+        // 1. Preparar la UI para una nueva solicitud
+        uiStartLoading();
 
         try {
-            // 1. Pedir a Ollama que genere la consulta
+            // 2. Pedir al backend que genere la consulta SQL
             const askResponse = await fetch('/sql/ask-ollama', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'x-api-token': apiToken
                 },
-                body: JSON.stringify({ question, tables: ['Pacientes', 'Citas'] })
+                body: JSON.stringify({ question })
             });
 
             if (!askResponse.ok) {
-                let errorMsg = 'Error al generar la consulta SQL.';
-                try {
-                    const errData = await askResponse.json();
-                    errorMsg = errData.error || JSON.stringify(errData);
-                } catch (e) {
-                    errorMsg = await askResponse.text();
-                }
-                throw new Error(errorMsg);
+                const errorData = await askResponse.json();
+                throw new Error(errorData.error || `Error del servidor: ${askResponse.status}`);
             }
 
             const { query: sqlQuery } = await askResponse.json();
             sqlQueryDisplay.textContent = sqlQuery;
-            resultsContainer.classList.remove('hidden');
 
-            // 2. Ejecutar la consulta SQL generada
+            // 3. Ejecutar la consulta SQL generada
             const queryResponse = await fetch('/sql/query', {
                 method: 'POST',
                 headers: {
@@ -59,34 +51,52 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!queryResponse.ok) {
-                let errorMsg = 'Error al ejecutar la consulta SQL.';
-                try {
-                    const errData = await queryResponse.json();
-                    errorMsg = errData.error || JSON.stringify(errData);
-                } catch (e) {
-                    errorMsg = await queryResponse.text();
-                }
-                throw new Error(errorMsg);
+                const errorData = await queryResponse.json();
+                throw new Error(errorData.error || `Error al ejecutar la consulta: ${queryResponse.status}`);
             }
 
             const { rows } = await queryResponse.json();
+            
+            // 4. Mostrar los resultados
             renderTable(rows);
+            uiShowResults();
 
         } catch (error) {
-            errorMessage.textContent = `Error: ${error.message}`;
-            errorMessage.classList.remove('hidden');
-            resultsContainer.classList.add('hidden');
+            // 5. Si algo falla, mostrar el error
+            uiShowError(error.message);
         } finally {
-            // Ocultar el loader y reactivar el botón
-            loadingIndicator.classList.add('hidden');
-            submitButton.disabled = false;
+            // 6. Terminar el estado de carga
+            uiStopLoading();
         }
     });
 
+    // --- Funciones de ayuda para la UI ---
+
+    function uiStartLoading() {
+        loadingIndicator.classList.remove('hidden');
+        resultsContainer.classList.add('hidden');
+        errorMessage.classList.add('hidden');
+        submitButton.disabled = true;
+    }
+
+    function uiStopLoading() {
+        loadingIndicator.classList.add('hidden');
+        submitButton.disabled = false;
+    }
+
+    function uiShowResults() {
+        resultsContainer.classList.remove('hidden');
+    }
+
+    function uiShowError(message) {
+        errorMessage.textContent = `Error: ${message}`;
+        errorMessage.classList.remove('hidden');
+    }
+
     function renderTable(data) {
-        resultsTableContainer.innerHTML = '';
+        resultsTableContainer.innerHTML = ''; // Limpiar tabla anterior
         if (!data || data.length === 0) {
-            resultsTableContainer.innerHTML = '<p>La consulta no devolvió resultados.</p>';
+            resultsTableContainer.innerHTML = '<p>La consulta se ejecutó correctamente, pero no devolvió resultados.</p>';
             return;
         }
 
@@ -108,12 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const row = document.createElement('tr');
             Object.values(rowData).forEach(value => {
                 const td = document.createElement('td');
-                // Formatear fechas si es necesario
-                if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}T/)) {
-                    td.textContent = new Date(value).toLocaleString();
-                } else {
-                    td.textContent = value;
-                }
+                td.textContent = value;
                 row.appendChild(td);
             });
             tbody.appendChild(row);
